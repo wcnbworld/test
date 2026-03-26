@@ -35,6 +35,7 @@ pyinstaller --noconfirm --clean --onefile --name PatentClassifier launcher.py
 ## 功能说明
 
 - 读取包含专利字段的 Excel/CSV。
+- 标题(译)(简体中文)、独立权利要求、技术功效、摘要(译)(简体中文)按“或”关系处理，四者至少有一列即可运行。
 - 自动把申请人按给定企业映射归一化。
 - 基于标题、独立权利要求、技术功效、摘要进行技术分类：
   - 赛车模拟器

@@ -14,15 +14,11 @@ from openpyxl import load_workbook
 REQUIRED_COLUMNS = [
     "公开(公告)号",
     "摘要附图",
-    "标题(译)(简体中文)",
     "专利类型",
-    "独立权利要求",
     "申请日",
     "[标]当前申请(专利权)人",
-    "技术功效",
     "申请号",
     "简单法律状态",
-    "摘要(译)(简体中文)",
 ]
 
 KEEP_CATEGORIES = ["赛车模拟器", "飞行模拟器", "手柄", "渔线轮", "电动扳手"]
@@ -366,7 +362,7 @@ def main():
             st.error(f"缺少必要列：{', '.join(missing)}")
             return
         if not any(col in df.columns for col in TEXT_SOURCE_COLUMNS):
-            st.error("分类字段需至少存在一个（标题/独立权利要求/技术功效/摘要），当前为“或”关系。")
+            st.error("标题(译)(简体中文)、独立权利要求、技术功效、摘要(译)(简体中文)为“或”关系，至少存在一个即可运行。")
             return
 
         rows = build_rows(df, image_map)
