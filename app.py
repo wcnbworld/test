@@ -8,9 +8,11 @@ import streamlit as st
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.shared import Inches
+from openpyxl import load_workbook
 
 REQUIRED_COLUMNS = [
-    "公开（公告)号",
+    "公开(公告)号",
     "摘要附图",
     "标题(译)(简体中文)",
     "专利类型",
@@ -24,6 +26,7 @@ REQUIRED_COLUMNS = [
 ]
 
 KEEP_CATEGORIES = ["赛车模拟器", "飞行模拟器", "手柄", "渔线轮", "电动扳手"]
+TEXT_SOURCE_COLUMNS = ["标题(译)(简体中文)", "独立权利要求", "技术功效", "摘要(译)(简体中文)"]
 
 APPLICANT_CANONICAL: Dict[str, List[str]] = {
     "成都翼胜": ["成都翼胜科技有限责任公司"],
@@ -63,7 +66,7 @@ APPLICANT_LOOKUP = {
 @dataclass
 class PatentRow:
     publication_no: str
-    image: str
+    image: bytes | None
     title: str
     patent_type: str
     claim: str
@@ -124,17 +127,17 @@ def patent_type_bucket(pt: str) -> str:
     return "其他"
 
 
-def build_rows(df: pd.DataFrame) -> List[PatentRow]:
+def build_rows(df: pd.DataFrame, image_map: Dict[int, bytes]) -> List[PatentRow]:
     rows: List[PatentRow] = []
-    for _, r in df.iterrows():
+    for idx, r in df.iterrows():
         title = r.get("标题(译)(简体中文)", "")
         claim = r.get("独立权利要求", "")
         effect = r.get("技术功效", "")
         abstract = r.get("摘要(译)(简体中文)", "")
         rows.append(
             PatentRow(
-                publication_no=str(r.get("公开（公告)号", "") or ""),
-                image="",
+                publication_no=str(r.get("公开(公告)号", "") or ""),
+                image=image_map.get(idx),
                 title=str(title or ""),
                 patent_type=str(r.get("专利类型", "") or ""),
                 claim=str(claim or ""),
@@ -160,9 +163,14 @@ def add_table_b(doc: Document, rows: List[PatentRow], applicant: str):
     table.rows[0].cells[2].text = "专利图片"
     for r in rows:
         row = table.add_row().cells
-        row[0].text = f"公开（公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
+        row[0].text = f"公开(公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
         row[1].text = r.title
-        row[2].text = ""
+        if r.image:
+            paragraph = row[2].paragraphs[0]
+            run = paragraph.add_run()
+            run.add_picture(io.BytesIO(r.image), width=Inches(1.6))
+        else:
+            row[2].text = ""
     apply_table_border(table)
 
 
@@ -176,8 +184,13 @@ def add_table_c(doc: Document, rows: List[PatentRow], applicant: str):
     table.rows[0].cells[2].text = "专利方案"
     for r in rows:
         row = table.add_row().cells
-        row[0].text = f"公开（公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n标题(译)(简体中文)：{r.title}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
-        row[1].text = ""
+        row[0].text = f"公开(公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n标题(译)(简体中文)：{r.title}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
+        if r.image:
+            paragraph = row[1].paragraphs[0]
+            run = paragraph.add_run()
+            run.add_picture(io.BytesIO(r.image), width=Inches(1.6))
+        else:
+            row[1].text = ""
         row[2].text = r.effect
     apply_table_border(table)
 
@@ -191,7 +204,7 @@ def add_table_d(doc: Document, rows: List[PatentRow]):
     table.rows[0].cells[1].text = "专利名称"
     for r in rows:
         row = table.add_row().cells
-        row[0].text = f"公开（公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
+        row[0].text = f"公开(公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
         row[1].text = r.title
     apply_table_border(table)
 
@@ -228,7 +241,7 @@ def generate_docs(rows: List[PatentRow]) -> Tuple[bytes, bytes, pd.DataFrame]:
     data = pd.DataFrame(
         [
             {
-                "公开（公告)号": r.publication_no,
+                "公开(公告)号": r.publication_no,
                 "申请人(归一化)": r.applicant,
                 "专利类型": r.patent_type,
                 "技术分类": r.category,
@@ -240,11 +253,43 @@ def generate_docs(rows: List[PatentRow]) -> Tuple[bytes, bytes, pd.DataFrame]:
     return out1.getvalue(), out2.getvalue(), data
 
 
-def load_dataframe(uploaded_file) -> pd.DataFrame:
+def extract_image_map_from_xlsx(uploaded_file) -> Dict[int, bytes]:
+    uploaded_file.seek(0)
+    wb = load_workbook(uploaded_file)
+    ws = wb.active
+
+    headers = [str(cell.value or "") for cell in ws[1]]
+    try:
+        image_col = headers.index("摘要附图")
+    except ValueError:
+        return {}
+
+    image_map: Dict[int, bytes] = {}
+    for img in getattr(ws, "_images", []):
+        anchor = getattr(img, "anchor", None)
+        pos = getattr(anchor, "_from", None)
+        if pos is None:
+            continue
+        if pos.col != image_col:
+            continue
+        df_idx = pos.row - 1
+        if df_idx < 0:
+            continue
+        image_map[df_idx] = img._data()
+    return image_map
+
+
+def load_dataframe(uploaded_file) -> Tuple[pd.DataFrame, Dict[int, bytes]]:
     name = uploaded_file.name.lower()
     if name.endswith(".csv"):
-        return pd.read_csv(uploaded_file)
-    return pd.read_excel(uploaded_file)
+        uploaded_file.seek(0)
+        return pd.read_csv(uploaded_file), {}
+    if name.endswith(".xlsx"):
+        image_map = extract_image_map_from_xlsx(uploaded_file)
+        uploaded_file.seek(0)
+        return pd.read_excel(uploaded_file), image_map
+    uploaded_file.seek(0)
+    return pd.read_excel(uploaded_file), {}
 
 
 def main():
@@ -261,13 +306,16 @@ def main():
         if uploaded is None:
             st.info("请先上传表格A。")
             return
-        df = load_dataframe(uploaded)
+        df, image_map = load_dataframe(uploaded)
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing:
             st.error(f"缺少必要列：{', '.join(missing)}")
             return
+        if not any(col in df.columns for col in TEXT_SOURCE_COLUMNS):
+            st.error("分类字段需至少存在一个（标题/独立权利要求/技术功效/摘要），当前为“或”关系。")
+            return
 
-        rows = build_rows(df)
+        rows = build_rows(df, image_map)
         doc_main, doc_other, result_df = generate_docs(rows)
 
         st.success(f"处理完成：共 {len(rows)} 条专利。")

@@ -46,4 +46,4 @@ pyinstaller --noconfirm --clean --onefile --name PatentClassifier launcher.py
 - 输出两个 Word：
   - 主文档：按申请人->专利类型生成表格B（外观）/表格C（发明、授权发明、实用新型）。
   - 其他文档：仅包含“其他”分类的表格D。
-- 按要求将“摘要附图”列置空展示（不保留图片）。
+- 从表格A中提取“摘要附图”并写入表格B/C对应“专利图片”列（xlsx支持图片提取）。
