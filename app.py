@@ -8,8 +8,10 @@ import streamlit as st
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Inches
-from openpyxl import load_workbook
+from docx.shared import Cm
+from openpyxl import Workbook, load_workbook
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.styles import Alignment, Border, Side
 
 REQUIRED_COLUMNS = [
     "公开(公告)号",
@@ -211,7 +213,7 @@ def add_table_b(doc: Document, rows: List[PatentRow], applicant: str):
         if r.image:
             paragraph = row[2].paragraphs[0]
             run = paragraph.add_run()
-            run.add_picture(io.BytesIO(r.image), width=Inches(1.6))
+            run.add_picture(io.BytesIO(r.image), height=Cm(2.7))
         else:
             row[2].text = ""
     apply_table_border(table)
@@ -231,7 +233,7 @@ def add_table_c(doc: Document, rows: List[PatentRow], applicant: str):
         if r.image:
             paragraph = row[1].paragraphs[0]
             run = paragraph.add_run()
-            run.add_picture(io.BytesIO(r.image), width=Inches(1.6))
+            run.add_picture(io.BytesIO(r.image), height=Cm(2.7))
         else:
             row[1].text = ""
         row[2].text = r.effect
@@ -253,13 +255,67 @@ def add_table_d(doc: Document, rows: List[PatentRow]):
         if r.image:
             paragraph = row[2].paragraphs[0]
             run = paragraph.add_run()
-            run.add_picture(io.BytesIO(r.image), width=Inches(1.6))
+            run.add_picture(io.BytesIO(r.image), height=Cm(2.7))
         else:
             row[2].text = ""
     apply_table_border(table)
 
 
-def generate_docs(rows: List[PatentRow]) -> Tuple[bytes, bytes, pd.DataFrame]:
+def build_other_output(rows: List[PatentRow]) -> Tuple[bytes, str, str]:
+    if len(rows) < 100:
+        other_doc = Document()
+        add_table_d(other_doc, rows)
+        out = io.BytesIO()
+        other_doc.save(out)
+        return (
+            out.getvalue(),
+            "专利分类结果_表格D.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "表格D"
+    ws.append(["申请信息", "专利名称", "专利附图"])
+
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    target_height_px = 102
+    target_height_pt = 76.5
+
+    ws.column_dimensions["A"].width = 55
+    ws.column_dimensions["B"].width = 45
+    ws.column_dimensions["C"].width = 28
+
+    for ridx, r in enumerate(rows, start=2):
+        ws.cell(row=ridx, column=1, value=f"{r.publication_no}\n{r.legal_status}\n{r.apply_date}\n{r.raw_applicant}")
+        ws.cell(row=ridx, column=2, value=r.title)
+        ws.row_dimensions[ridx].height = target_height_pt
+
+        if r.image:
+            img = XLImage(io.BytesIO(r.image))
+            if img.height and img.height > 0:
+                scale = target_height_px / img.height
+                img.height = target_height_px
+                img.width = int(img.width * scale)
+            img.anchor = f"C{ridx}"
+            ws.add_image(img)
+
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=3):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    out = io.BytesIO()
+    wb.save(out)
+    return (
+        out.getvalue(),
+        "专利分类结果_表格D.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def generate_docs(rows: List[PatentRow]) -> Tuple[bytes, bytes, str, str, pd.DataFrame]:
     kept = [r for r in rows if r.category in KEEP_CATEGORIES]
     other = [r for r in rows if r.category == "其他"]
 
@@ -280,13 +336,9 @@ def generate_docs(rows: List[PatentRow]) -> Tuple[bytes, bytes, pd.DataFrame]:
         if invent_rows:
             add_table_c(summary_doc, invent_rows, applicant)
 
-    other_doc = Document()
-    add_table_d(other_doc, other)
-
     out1 = io.BytesIO()
     summary_doc.save(out1)
-    out2 = io.BytesIO()
-    other_doc.save(out2)
+    other_payload, other_name, other_mime = build_other_output(other)
 
     data = pd.DataFrame(
         [
@@ -300,7 +352,7 @@ def generate_docs(rows: List[PatentRow]) -> Tuple[bytes, bytes, pd.DataFrame]:
             for r in rows
         ]
     )
-    return out1.getvalue(), out2.getvalue(), data
+    return out1.getvalue(), other_payload, other_name, other_mime, data
 
 
 def extract_image_map_from_xlsx(uploaded_file) -> Dict[int, bytes]:
@@ -366,7 +418,7 @@ def main():
             return
 
         rows = build_rows(df, image_map)
-        doc_main, doc_other, result_df = generate_docs(rows)
+        doc_main, doc_other, other_name, other_mime, result_df = generate_docs(rows)
 
         st.success(f"处理完成：共 {len(rows)} 条专利。")
         st.dataframe(result_df, use_container_width=True)
@@ -378,10 +430,10 @@ def main():
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
         st.download_button(
-            "下载其他分类文档（表格D）",
+            "下载其他分类结果（表格D）",
             data=doc_other,
-            file_name="专利分类结果_表格D.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            file_name=other_name,
+            mime=other_mime,
         )
 
 
