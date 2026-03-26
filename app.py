@@ -71,6 +71,7 @@ class PatentRow:
     patent_type: str
     claim: str
     apply_date: str
+    raw_applicant: str
     applicant: str
     effect: str
     app_no: str
@@ -91,15 +92,60 @@ def canonicalize_applicant(raw: str) -> str:
 def classify_patent(title: str, claim: str, effect: str, abstract: str) -> str:
     text = " ".join([str(title or ""), str(claim or ""), str(effect or ""), str(abstract or "")]).lower()
 
-    if any(k in text for k in ["赛车", "方向盘", "踏板", "力反馈", "sim racing", "racing simulator"]):
+    racing_keywords = [
+        "赛车模拟器",
+        "模拟赛车",
+        "力反馈",
+        "方向盘",
+        "踏板",
+        "手刹",
+        "排挡",
+        "sim racing",
+        "racing simulator",
+        "drive simulator",
+        "赛车游戏",
+        "赛车设备",
+    ]
+    flight_keywords = [
+        "飞行模拟器",
+        "飞行摇杆",
+        "民航模拟",
+        "节流阀",
+        "脚舵",
+        "飞行控制",
+        "flight simulator",
+        "aviation simulator",
+        "直升机模拟",
+    ]
+    controller_keywords = [
+        "游戏手柄",
+        "手柄",
+        "控制器",
+        "gamepad",
+        "controller",
+        "操作手柄",
+        "无线手柄",
+    ]
+    reel_keywords = ["渔线轮", "鱼线轮", "卷线器", "纺车轮", "水滴轮", "fishing reel"]
+    wrench_keywords = [
+        "电动扳手",
+        "电动螺丝刀",
+        "冲击扳手",
+        "电批",
+        "电动工具",
+        "electric wrench",
+        "electric screwdriver",
+    ]
+
+    if any(k in text for k in racing_keywords):
         return "赛车模拟器"
-    if any(k in text for k in ["飞行", "flight", "摇杆", "节流阀", "油门杆", "舵"]):
+    if any(k in text for k in flight_keywords):
         return "飞行模拟器"
-    if any(k in text for k in ["游戏手柄", "控制器", "controller", "gamepad", "joystick"]):
+    if any(k in text for k in controller_keywords):
         return "手柄"
-    if any(k in text for k in ["渔线轮", "卷线器", "fishing reel"]):
+    if any(k in text for k in reel_keywords):
         return "渔线轮"
-    if any(k in text for k in ["电动扳手", "电动螺丝刀", "electric wrench", "electric screwdriver"]):
+    if any(k in text for k in wrench_keywords):
         return "电动扳手"
     return "其他"
 
@@ -142,6 +188,7 @@ def build_rows(df: pd.DataFrame, image_map: Dict[int, bytes]) -> List[PatentRow]
                 patent_type=str(r.get("专利类型", "") or ""),
                 claim=str(claim or ""),
                 apply_date=str(r.get("申请日", "") or ""),
+                raw_applicant=str(r.get("[标]当前申请(专利权)人", "") or ""),
                 applicant=canonicalize_applicant(r.get("[标]当前申请(专利权)人", "")),
                 effect=str(effect or ""),
                 app_no=str(r.get("申请号", "") or ""),
@@ -163,7 +210,7 @@ def add_table_b(doc: Document, rows: List[PatentRow], applicant: str):
     table.rows[0].cells[2].text = "专利图片"
     for r in rows:
         row = table.add_row().cells
-        row[0].text = f"公开(公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
+        row[0].text = f"{r.publication_no}\n{r.legal_status}\n{r.apply_date}\n{r.raw_applicant}"
         row[1].text = r.title
         if r.image:
             paragraph = row[2].paragraphs[0]
@@ -184,7 +231,7 @@ def add_table_c(doc: Document, rows: List[PatentRow], applicant: str):
     table.rows[0].cells[2].text = "专利方案"
     for r in rows:
         row = table.add_row().cells
-        row[0].text = f"公开(公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n标题(译)(简体中文)：{r.title}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
+        row[0].text = f"{r.publication_no}\n{r.legal_status}\n{r.title}\n{r.apply_date}\n{r.raw_applicant}"
         if r.image:
             paragraph = row[1].paragraphs[0]
             run = paragraph.add_run()
@@ -199,13 +246,20 @@ def add_table_d(doc: Document, rows: List[PatentRow]):
     if not rows:
         return
     doc.add_heading("表格D（技术分类=其他）", level=1)
-    table = doc.add_table(rows=1, cols=2)
+    table = doc.add_table(rows=1, cols=3)
     table.rows[0].cells[0].text = "申请信息"
     table.rows[0].cells[1].text = "专利名称"
+    table.rows[0].cells[2].text = "专利附图"
     for r in rows:
         row = table.add_row().cells
-        row[0].text = f"公开(公告)号：{r.publication_no}\n简单法律状态：{r.legal_status}\n申请日：{r.apply_date}\n[标]当前申请(专利权)人：{r.applicant}"
+        row[0].text = f"{r.publication_no}\n{r.legal_status}\n{r.apply_date}\n{r.raw_applicant}"
         row[1].text = r.title
+        if r.image:
+            paragraph = row[2].paragraphs[0]
+            run = paragraph.add_run()
+            run.add_picture(io.BytesIO(r.image), width=Inches(1.6))
+        else:
+            row[2].text = ""
     apply_table_border(table)
 
 
